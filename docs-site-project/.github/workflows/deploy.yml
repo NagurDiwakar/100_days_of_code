@@ -1,0 +1,384 @@
+name: 🚀 Deploy Documentation Site
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      deployment_type:
+        description: 'Choose deployment type'
+        required: true
+        default: 'docker'
+        type: choice
+        options:
+          - docker
+          - heroku
+          - aws
+          - digital-ocean
+
+env:
+  PYTHON_VERSION: '3.9'
+  NODE_VERSION: '18'
+  DOCKER_IMAGE_NAME: docs-site
+  REGISTRY: ghcr.io
+
+jobs:
+  # Test and Build Job
+  test-and-build:
+    name: 🧪 Test & Build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov flake8 black
+        
+    - name: 🔍 Code quality checks
+      run: |
+        # Format check with black
+        black --check --diff .
+        
+        # Linting with flake8
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        
+    - name: 🧪 Run tests
+      run: |
+        # Create test directory if it doesn't exist
+        mkdir -p tests
+        
+        # Create basic tests if they don't exist
+        if [ ! -f tests/test_app.py ]; then
+          cat > tests/test_app.py << 'EOF'
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        import pytest
+        from app import app, DocumentationSite
+        
+        @pytest.fixture
+        def client():
+            app.config['TESTING'] = True
+            with app.test_client() as client:
+                yield client
+                
+        def test_homepage(client):
+            """Test the homepage loads correctly"""
+            rv = client.get('/')
+            assert rv.status_code == 200
+            assert b'Documentation Site' in rv.data
+            
+        def test_api_docs(client):
+            """Test the API endpoint"""
+            rv = client.get('/api/docs')
+            assert rv.status_code == 200
+            
+        def test_new_doc_page(client):
+            """Test new document page"""
+            rv = client.get('/new')
+            assert rv.status_code == 200
+            assert b'editor' in rv.data
+            
+        def test_documentation_site_init():
+            """Test DocumentationSite initialization"""
+            doc_site = DocumentationSite()
+            assert doc_site.config is not None
+            assert 'site_name' in doc_site.config
+        EOF
+        fi
+        
+        # Run tests
+        pytest tests/ -v --cov=. --cov-report=xml
+        
+    - name: 📊 Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        
+    - name: 🏗️ Create directories for build
+      run: |
+        mkdir -p docs static/css static/js
+        
+    - name: 📦 Create deployment package
+      run: |
+        # Create a deployment package
+        tar -czf docs-site-${{ github.sha }}.tar.gz \
+          app.py deploy.py setup.py requirements.txt \
+          Dockerfile docker-compose.yml site_config.yaml \
+          templates/ static/ docs/
+          
+    - name: 📤 Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: docs-site-package
+        path: docs-site-${{ github.sha }}.tar.gz
+        retention-days: 30
+
+  # Docker Build and Push Job
+  docker-build:
+    name: 🐳 Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test-and-build
+    if: github.event_name == 'push' || github.event.inputs.deployment_type == 'docker'
+    
+    permissions:
+      contents: read
+      packages: write
+      
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🏗️ Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: 🔐 Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: 🏷️ Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          
+    - name: 🏗️ Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: 📋 Image digest
+      run: echo "Image pushed with digest ${{ steps.build.outputs.digest }}"
+
+  # Deploy to Self-Hosted Server
+  deploy-self-hosted:
+    name: 🚀 Deploy to Self-Hosted
+    runs-on: ubuntu-latest
+    needs: [test-and-build, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: 
+      name: production
+      url: ${{ vars.PRODUCTION_URL || 'http://your-server.com' }}
+      
+    steps:
+    - name: 📥 Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: docs-site-package
+        
+    - name: 🚀 Deploy to server
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT || 22 }}
+        script: |
+          # Create deployment directory
+          mkdir -p /opt/docs-site
+          cd /opt/docs-site
+          
+          # Download and extract latest build
+          wget -O docs-site-latest.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/latest/docs-site-${{ github.sha }}.tar.gz" || \
+            echo "Using local deployment method"
+          
+          # Stop existing services
+          docker-compose down || echo "No existing services"
+          
+          # Extract new version
+          tar -xzf docs-site-latest.tar.gz || echo "Manual deployment"
+          
+          # Deploy with Docker Compose
+          docker-compose pull
+          docker-compose up -d --build
+          
+          # Health check
+          sleep 10
+          curl -f http://localhost:5000 || exit 1
+          
+          echo "✅ Deployment successful!"
+
+  # Deploy to Heroku
+  deploy-heroku:
+    name: 🌐 Deploy to Heroku
+    runs-on: ubuntu-latest
+    needs: test-and-build
+    if: github.event.inputs.deployment_type == 'heroku' || (github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[deploy-heroku]'))
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🌐 Deploy to Heroku
+      uses: akhileshns/heroku-deploy@v3.12.14
+      with:
+        heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+        heroku_app_name: ${{ secrets.HEROKU_APP_NAME }}
+        heroku_email: ${{ secrets.HEROKU_EMAIL }}
+        dockerfile_name: Dockerfile
+        
+    - name: 🏷️ Create Heroku config
+      run: |
+        # Create Procfile for Heroku
+        echo "web: gunicorn --bind 0.0.0.0:\$PORT app:app" > Procfile
+        
+        # Create runtime.txt
+        echo "python-${{ env.PYTHON_VERSION }}" > runtime.txt
+
+  # Deploy to AWS ECS
+  deploy-aws:
+    name: ☁️ Deploy to AWS ECS
+    runs-on: ubuntu-latest
+    needs: [test-and-build, docker-build]
+    if: github.event.inputs.deployment_type == 'aws'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔐 Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+        
+    - name: 🏗️ Deploy to ECS
+      run: |
+        # Update ECS service with new image
+        aws ecs update-service \
+          --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+          --service ${{ secrets.ECS_SERVICE_NAME }} \
+          --force-new-deployment
+          
+        # Wait for deployment to complete
+        aws ecs wait services-stable \
+          --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+          --services ${{ secrets.ECS_SERVICE_NAME }}
+
+  # Deploy to Digital Ocean
+  deploy-digitalocean:
+    name: 🌊 Deploy to Digital Ocean
+    runs-on: ubuntu-latest
+    needs: [test-and-build, docker-build]
+    if: github.event.inputs.deployment_type == 'digital-ocean'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🌊 Deploy to Digital Ocean App Platform
+      uses: digitalocean/app_action@v1.1.5
+      with:
+        app_name: ${{ secrets.DO_APP_NAME }}
+        token: ${{ secrets.DO_ACCESS_TOKEN }}
+
+  # Release Job
+  create-release:
+    name: 📦 Create Release
+    runs-on: ubuntu-latest
+    needs: [test-and-build, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 📥 Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: docs-site-package
+        
+    - name: 🏷️ Generate tag
+      id: tag
+      run: |
+        echo "tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        
+    - name: 📦 Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: Documentation Site ${{ steps.tag.outputs.tag }}
+        body: |
+          ## 🚀 Documentation Site Release
+          
+          ### Changes in this release:
+          ${{ github.event.head_commit.message }}
+          
+          ### Deployment Options:
+          
+          #### 🐳 Docker:
+          ```bash
+          docker pull ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_NAME }}:latest
+          docker run -p 5000:5000 ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_NAME }}:latest
+          ```
+          
+          #### 📦 Manual:
+          1. Download the source code
+          2. Run `python setup.py`
+          3. Run `python app.py`
+          
+          ### Features:
+          - ✅ Live markdown editor
+          - ✅ Document search
+          - ✅ Docker deployment
+          - ✅ API access
+          - ✅ Mobile responsive
+          
+          **Commit:** ${{ github.sha }}
+          **Author:** ${{ github.actor }}
+        files: |
+          docs-site-${{ github.sha }}.tar.gz
+        draft: false
+        prerelease: false
+
+  # Notification Job
+  notify:
+    name: 📢 Notify
+    runs-on: ubuntu-latest
+    needs: [deploy-self-hosted, deploy-heroku, deploy-aws, deploy-digitalocean]
+    if: always() && (github.ref == 'refs/heads/main' && github.event_name == 'push')
+    
+    steps:
+    - name: 📢 Notify on success
+      if: ${{ contains(needs.*.result, 'success') }}
+      run: |
+        echo "🎉 Deployment successful!"
+        # Add Slack/Discord/Email notification here
+        
+    - name: 📢 Notify on failure
+      if: ${{ contains(needs.*.result, 'failure') }}
+      run: |
+        echo "❌ Deployment failed!"
+        # Add failure notification here

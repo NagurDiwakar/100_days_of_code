@@ -1,0 +1,249 @@
+name: 📦 Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  create-release:
+    name: 📦 Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+      
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+        
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: 🏷️ Get version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: 📝 Generate changelog
+      id: changelog
+      run: |
+        # Generate changelog from commits since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        
+        if [ -n "$LAST_TAG" ]; then
+          echo "## Changes since $LAST_TAG" > CHANGELOG.md
+          git log --pretty=format:"- %s (%h)" $LAST_TAG..HEAD >> CHANGELOG.md
+        else
+          echo "## Initial Release" > CHANGELOG.md
+          git log --pretty=format:"- %s (%h)" >> CHANGELOG.md
+        fi
+        
+        # Read changelog into output
+        {
+          echo 'changelog<<EOF'
+          cat CHANGELOG.md
+          echo EOF
+        } >> $GITHUB_OUTPUT
+        
+    - name: 📦 Create deployment package
+      run: |
+        # Create deployment package
+        mkdir -p release
+        
+        # Package source code
+        tar -czf release/docs-site-${{ steps.version.outputs.version }}-source.tar.gz \
+          --exclude='.git' \
+          --exclude='release' \
+          --exclude='__pycache__' \
+          --exclude='*.pyc' \
+          --exclude='.pytest_cache' \
+          --exclude='htmlcov' \
+          .
+          
+        # Create quick deploy script
+        cat > release/quick-deploy.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        echo "🚀 Quick Deploy - Documentation Site"
+        echo "=================================="
+        
+        # Extract source
+        tar -xzf docs-site-*-source.tar.gz
+        cd docs-site-*
+        
+        # Install dependencies
+        pip install -r requirements.txt
+        
+        # Run setup
+        python setup.py
+        
+        echo "✅ Setup complete!"
+        echo "🚀 Start the server with: python app.py"
+        echo "📱 Then open: http://localhost:5000"
+        EOF
+        
+        chmod +x release/quick-deploy.sh
+        
+        # Create Docker deployment files
+        cp docker-compose.yml release/
+        cp Dockerfile release/
+        
+        # Create deployment guide
+        cat > release/DEPLOYMENT.md << 'EOF'
+        # Deployment Guide
+        
+        ## Quick Start
+        ```bash
+        # Download and extract
+        curl -L -o docs-site.tar.gz [RELEASE_URL]/docs-site-${{ steps.version.outputs.version }}-source.tar.gz
+        tar -xzf docs-site.tar.gz
+        cd docs-site-*
+        
+        # Install and run
+        python setup.py
+        python app.py
+        ```
+        
+        ## Docker Deployment
+        ```bash
+        # Using Docker Compose
+        docker-compose up -d
+        
+        # Or with Docker directly
+        docker build -t docs-site .
+        docker run -p 5000:5000 docs-site
+        ```
+        
+        ## Production Deployment
+        ```bash
+        # With Gunicorn
+        pip install gunicorn
+        gunicorn --bind 0.0.0.0:5000 --workers 4 app:app
+        
+        # With Docker in production
+        docker run -d -p 80:5000 --restart unless-stopped docs-site
+        ```
+        EOF
+        
+    - name: 📊 Generate release statistics
+      run: |
+        echo "## 📊 Release Statistics" >> release/STATS.md
+        echo "" >> release/STATS.md
+        echo "- **Files:** $(find . -name '*.py' -o -name '*.html' -o -name '*.css' -o -name '*.js' | wc -l)" >> release/STATS.md
+        echo "- **Lines of Code:** $(find . -name '*.py' -exec wc -l {} + | tail -1 | awk '{print $1}')" >> release/STATS.md
+        echo "- **Commit Count:** $(git rev-list --count HEAD)" >> release/STATS.md
+        echo "- **Contributors:** $(git log --format='%an' | sort -u | wc -l)" >> release/STATS.md
+        echo "- **Release Date:** $(date -u +%Y-%m-%d)" >> release/STATS.md
+        
+    - name: 📦 Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        name: Documentation Site ${{ steps.version.outputs.version }}
+        body: |
+          # 🚀 Documentation Site ${{ steps.version.outputs.version }}
+          
+          A modern, feature-rich documentation platform built with Flask.
+          
+          ## ✨ What's New
+          
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ## 🚀 Quick Deploy
+          
+          ### Option 1: Quick Start
+          ```bash
+          curl -L -o quick-deploy.sh https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/quick-deploy.sh
+          chmod +x quick-deploy.sh
+          ./quick-deploy.sh
+          ```
+          
+          ### Option 2: Docker
+          ```bash
+          docker run -p 5000:5000 ghcr.io/${{ github.repository }}/docs-site:${{ steps.version.outputs.version }}
+          ```
+          
+          ### Option 3: Manual
+          1. Download `docs-site-${{ steps.version.outputs.version }}-source.tar.gz`
+          2. Extract and run `python setup.py`
+          3. Start with `python app.py`
+          
+          ## 📋 Features
+          
+          - ✅ **Live Markdown Editor** - Real-time preview as you type
+          - ✅ **Document Search** - Full-text search across all docs
+          - ✅ **Docker Ready** - One-command deployment
+          - ✅ **API Access** - RESTful endpoints for automation
+          - ✅ **Mobile Responsive** - Perfect on any device
+          - ✅ **Auto-save** - Never lose your work
+          - ✅ **Syntax Highlighting** - Beautiful code blocks
+          - ✅ **Modern UI** - Clean, professional interface
+          
+          ## 🔧 System Requirements
+          
+          - Python 3.8+ 
+          - 512MB RAM minimum
+          - 100MB disk space
+          - Modern web browser
+          
+          ## 📖 Documentation
+          
+          - [Deployment Guide](DEPLOYMENT.md)
+          - [API Reference](docs/api-reference.md)
+          - [User Guide](docs/getting-started.md)
+          
+          ## 🐛 Bug Reports
+          
+          Found an issue? [Report it here](https://github.com/${{ github.repository }}/issues)
+          
+          ## 💬 Support
+          
+          Need help? Check our [documentation](https://github.com/${{ github.repository }}/wiki) or [open an issue](https://github.com/${{ github.repository }}/issues).
+          
+          ---
+          
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/v1.0.0...${{ steps.version.outputs.version }}
+          
+        files: |
+          release/docs-site-${{ steps.version.outputs.version }}-source.tar.gz
+          release/quick-deploy.sh
+          release/docker-compose.yml
+          release/Dockerfile
+          release/DEPLOYMENT.md
+          release/STATS.md
+        draft: false
+        prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+        generate_release_notes: true
+        
+    - name: 📢 Post-release actions
+      run: |
+        echo "🎉 Release ${{ steps.version.outputs.version }} created successfully!"
+        echo "📦 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }}"
+        
+        # Here you could add:
+        # - Slack/Discord notifications
+        # - Update documentation sites
+        # - Trigger downstream deployments
+        # - Send email notifications

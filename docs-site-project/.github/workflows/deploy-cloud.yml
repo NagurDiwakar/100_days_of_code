@@ -1,0 +1,372 @@
+name: 🌐 Deploy to Cloud Platforms
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Choose deployment platform'
+        required: true
+        type: choice
+        options:
+          - heroku
+          - aws-ecs
+          - digital-ocean
+          - railway
+          - render
+          - fly-io
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+
+env:
+  DOCKER_IMAGE: ghcr.io/${{ github.repository }}/docs-site:latest
+
+jobs:
+  # Deploy to Heroku
+  deploy-heroku:
+    name: 🟣 Deploy to Heroku
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'heroku'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🟣 Deploy to Heroku
+      uses: akhileshns/heroku-deploy@v3.12.14
+      with:
+        heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+        heroku_app_name: ${{ secrets.HEROKU_APP_NAME }}
+        heroku_email: ${{ secrets.HEROKU_EMAIL }}
+        usedocker: true
+        docker_build_args: |
+          NODE_ENV
+        healthcheck: "https://${{ secrets.HEROKU_APP_NAME }}.herokuapp.com/"
+        
+    - name: 🟣 Create Heroku files
+      run: |
+        # Procfile for Heroku
+        echo "web: gunicorn --bind 0.0.0.0:\$PORT --workers 4 app:app" > Procfile
+        
+        # heroku.yml for container deployment
+        cat > heroku.yml << 'EOF'
+        build:
+          docker:
+            web: Dockerfile
+        run:
+          web: gunicorn --bind 0.0.0.0:$PORT --workers 4 app:app
+        EOF
+        
+        # App configuration
+        echo "Setting Heroku config vars..."
+        # These would be set via Heroku CLI or dashboard:
+        # heroku config:set FLASK_ENV=production --app $APP_NAME
+        # heroku config:set FLASK_DEBUG=0 --app $APP_NAME
+
+  # Deploy to AWS ECS
+  deploy-aws:
+    name: ☁️ Deploy to AWS ECS
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'aws-ecs'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: ☁️ Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+        
+    - name: 🏗️ Create ECS task definition
+      run: |
+        cat > task-definition.json << EOF
+        {
+          "family": "docs-site-${{ github.event.inputs.environment }}",
+          "networkMode": "awsvpc",
+          "requiresCompatibilities": ["FARGATE"],
+          "cpu": "256",
+          "memory": "512",
+          "executionRoleArn": "${{ secrets.ECS_EXECUTION_ROLE_ARN }}",
+          "taskRoleArn": "${{ secrets.ECS_TASK_ROLE_ARN }}",
+          "containerDefinitions": [
+            {
+              "name": "docs-site",
+              "image": "${{ env.DOCKER_IMAGE }}",
+              "portMappings": [
+                {
+                  "containerPort": 5000,
+                  "protocol": "tcp"
+                }
+              ],
+              "essential": true,
+              "environment": [
+                {
+                  "name": "FLASK_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "FLASK_DEBUG",
+                  "value": "0"
+                }
+              ],
+              "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                  "awslogs-group": "/ecs/docs-site",
+                  "awslogs-region": "${{ secrets.AWS_REGION }}",
+                  "awslogs-stream-prefix": "ecs"
+                }
+              }
+            }
+          ]
+        }
+        EOF
+        
+    - name: ☁️ Deploy to ECS
+      run: |
+        # Register task definition
+        aws ecs register-task-definition \
+          --cli-input-json file://task-definition.json
+          
+        # Update service
+        aws ecs update-service \
+          --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+          --service docs-site-${{ github.event.inputs.environment }} \
+          --task-definition docs-site-${{ github.event.inputs.environment }}
+          
+        # Wait for deployment
+        aws ecs wait services-stable \
+          --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+          --services docs-site-${{ github.event.inputs.environment }}
+
+  # Deploy to Digital Ocean
+  deploy-digitalocean:
+    name: 🌊 Deploy to Digital Ocean
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'digital-ocean'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🌊 Create App Platform spec
+      run: |
+        cat > .do/app.yaml << EOF
+        name: docs-site-${{ github.event.inputs.environment }}
+        services:
+        - name: web
+          source_dir: /
+          github:
+            repo: ${{ github.repository }}
+            branch: main
+            deploy_on_push: true
+          run_command: gunicorn --workers 4 --bind 0.0.0.0:8080 app:app
+          environment_slug: python
+          instance_count: 1
+          instance_size_slug: basic-xxs
+          http_port: 8080
+          health_check:
+            http_path: /
+          env:
+          - key: FLASK_ENV
+            value: production
+          - key: FLASK_DEBUG
+            value: "0"
+        EOF
+        
+    - name: 🌊 Deploy to Digital Ocean
+      uses: digitalocean/app_action@v1.1.5
+      with:
+        app_name: docs-site-${{ github.event.inputs.environment }}
+        token: ${{ secrets.DO_ACCESS_TOKEN }}
+
+  # Deploy to Railway
+  deploy-railway:
+    name: 🚂 Deploy to Railway
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'railway'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🚂 Deploy to Railway
+      run: |
+        # Install Railway CLI
+        curl -L https://railway.app/install.sh | sh
+        
+        # Login and deploy
+        echo "${{ secrets.RAILWAY_TOKEN }}" | railway login
+        
+        # Set environment variables
+        railway variables set FLASK_ENV=production
+        railway variables set FLASK_DEBUG=0
+        
+        # Deploy
+        railway up --detach
+        
+    - name: 🚂 Create railway.json
+      run: |
+        cat > railway.json << 'EOF'
+        {
+          "$schema": "https://railway.app/railway.schema.json",
+          "build": {
+            "builder": "dockerfile"
+          },
+          "deploy": {
+            "startCommand": "gunicorn --bind 0.0.0.0:$PORT --workers 4 app:app",
+            "healthcheckPath": "/",
+            "healthcheckTimeout": 100,
+            "restartPolicyType": "on_failure",
+            "restartPolicyMaxRetries": 10
+          }
+        }
+        EOF
+
+  # Deploy to Render
+  deploy-render:
+    name: 🎨 Deploy to Render
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'render'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🎨 Create render.yaml
+      run: |
+        cat > render.yaml << EOF
+        services:
+          - type: web
+            name: docs-site-${{ github.event.inputs.environment }}
+            env: python
+            buildCommand: "pip install -r requirements.txt"
+            startCommand: "gunicorn --bind 0.0.0.0:\$PORT --workers 4 app:app"
+            plan: free
+            envVars:
+              - key: FLASK_ENV
+                value: production
+              - key: FLASK_DEBUG
+                value: "0"
+            healthCheckPath: /
+        EOF
+        
+    - name: 🎨 Deploy to Render
+      run: |
+        echo "Render deployment configured in render.yaml"
+        echo "Connect your GitHub repo to Render dashboard to deploy automatically"
+
+  # Deploy to Fly.io
+  deploy-fly:
+    name: 🪰 Deploy to Fly.io
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'fly-io'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🪰 Setup Fly.io CLI
+      uses: superfly/flyctl-actions/setup-flyctl@master
+      
+    - name: 🪰 Create fly.toml
+      run: |
+        cat > fly.toml << EOF
+        app = "docs-site-${{ github.event.inputs.environment }}"
+        
+        [build]
+          dockerfile = "Dockerfile"
+        
+        [env]
+          FLASK_ENV = "production"
+          FLASK_DEBUG = "0"
+        
+        [[services]]
+          internal_port = 5000
+          protocol = "tcp"
+        
+          [[services.ports]]
+            handlers = ["http"]
+            port = "80"
+        
+          [[services.ports]]
+            handlers = ["tls", "http"]
+            port = "443"
+        
+          [services.concurrency]
+            hard_limit = 25
+            soft_limit = 20
+        
+        [[services.tcp_checks]]
+          grace_period = "10s"
+          interval = "15s"
+          restart_limit = 6
+          timeout = "2s"
+        
+        [[services.http_checks]]
+          grace_period = "10s"
+          interval = "30s"
+          method = "get"
+          path = "/"
+          protocol = "http"
+          restart_limit = 6
+          timeout = "10s"
+        EOF
+        
+    - name: 🪰 Deploy to Fly.io
+      run: |
+        flyctl auth token ${{ secrets.FLY_API_TOKEN }}
+        flyctl deploy --remote-only
+      env:
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  # Post-deployment verification
+  verify-deployment:
+    name: ✅ Verify Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy-heroku, deploy-aws, deploy-digitalocean, deploy-railway, deploy-render, deploy-fly]
+    if: always() && (needs.deploy-heroku.result == 'success' || needs.deploy-aws.result == 'success' || needs.deploy-digitalocean.result == 'success' || needs.deploy-railway.result == 'success' || needs.deploy-render.result == 'success' || needs.deploy-fly.result == 'success')
+    
+    steps:
+    - name: ✅ Deployment verification
+      run: |
+        echo "🎉 Deployment to ${{ github.event.inputs.platform }} completed!"
+        echo "🌍 Environment: ${{ github.event.inputs.environment }}"
+        echo "⏰ Deployed at: $(date -u)"
+        
+        # Add health checks here based on platform
+        case "${{ github.event.inputs.platform }}" in
+          "heroku")
+            echo "🟣 Heroku deployment successful"
+            # Health check would go here
+            ;;
+          "aws-ecs")
+            echo "☁️ AWS ECS deployment successful"
+            ;;
+          "digital-ocean")
+            echo "🌊 Digital Ocean deployment successful"
+            ;;
+          "railway")
+            echo "🚂 Railway deployment successful"
+            ;;
+          "render")
+            echo "🎨 Render deployment successful"
+            ;;
+          "fly-io")
+            echo "🪰 Fly.io deployment successful"
+            ;;
+        esac

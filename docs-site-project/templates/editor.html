@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}{% if filename == 'new_document.md' %}New Document{% else %}Edit {{ filename.replace('.md', '').replace('_', ' ').title() }}{% endif %} - {{ config.site_name }}{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row mb-3">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('index') }}">Home</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">
+                        {% if filename == 'new_document.md' %}New Document{% else %}Edit {{ filename.replace('.md', '').replace('_', ' ').title() }}{% endif %}
+                    </li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Editor Panel -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">📝 Editor</h5>
+                    <div class="btn-group btn-group-sm">
+                        <button id="saveBtn" class="btn btn-primary">💾 Save</button>
+                        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">❌ Cancel</a>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="mb-3 p-3 border-bottom">
+                        <label for="filename" class="form-label">Filename:</label>
+                        <input type="text" id="filename" class="form-control" 
+                               value="{{ filename.replace('.md', '') }}" 
+                               placeholder="document-name">
+                        <small class="form-text text-muted">Will be saved as .md file</small>
+                    </div>
+                    <textarea id="editor" class="form-control border-0" 
+                              style="min-height: 500px; resize: vertical; font-family: 'Courier New', monospace;">{{ content }}</textarea>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Preview Panel -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">👁️ Live Preview</h5>
+                </div>
+                <div class="card-body" id="preview" style="min-height: 500px;">
+                    <p class="text-muted">Start typing to see the preview...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Markdown Help -->
+    <div class="row mt-4">
+        <div class="col">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0">📖 Markdown Quick Reference</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <strong>Headers:</strong><br>
+                            <code># H1</code><br>
+                            <code>## H2</code><br>
+                            <code>### H3</code>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Text:</strong><br>
+                            <code>**bold**</code><br>
+                            <code>*italic*</code><br>
+                            <code>`code`</code>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Lists:</strong><br>
+                            <code>- item</code><br>
+                            <code>1. numbered</code><br>
+                            <code>- [x] todo</code>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Links:</strong><br>
+                            <code>[text](url)</code><br>
+                            <code>![alt](image.jpg)</code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+<script>
+    const editor = document.getElementById('editor');
+    const preview = document.getElementById('preview');
+    const filenameInput = document.getElementById('filename');
+    const saveBtn = document.getElementById('saveBtn');
+    
+    // Live preview
+    function updatePreview() {
+        const content = editor.value;
+        if (content.trim()) {
+            preview.innerHTML = marked.parse(content);
+            // Re-highlight code blocks
+            hljs.highlightAll();
+        } else {
+            preview.innerHTML = '<p class="text-muted">Start typing to see the preview...</p>';
+        }
+    }
+    
+    // Update preview on input
+    editor.addEventListener('input', updatePreview);
+    
+    // Initial preview update
+    updatePreview();
+    
+    // Save functionality
+    saveBtn.addEventListener('click', function() {
+        const filename = filenameInput.value.trim();
+        const content = editor.value;
+        
+        if (!filename) {
+            alert('Please enter a filename');
+            return;
+        }
+        
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '💾 Saving...';
+        
+        fetch('/save', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                filename: filename + '.md',
+                content: content
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                saveBtn.innerHTML = '✅ Saved!';
+                setTimeout(() => {
+                    window.location.href = '/doc/' + filename;
+                }, 1000);
+            } else {
+                alert('Error saving document: ' + (data.error || 'Unknown error'));
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '💾 Save';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error saving document');
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '💾 Save';
+        });
+    });
+    
+    // Keyboard shortcuts
+    editor.addEventListener('keydown', function(e) {
+        if (e.ctrlKey || e.metaKey) {
+            if (e.key === 's') {
+                e.preventDefault();
+                saveBtn.click();
+            }
+        }
+        
+        // Tab support
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const start = this.selectionStart;
+            const end = this.selectionEnd;
+            this.value = this.value.substring(0, start) + '\t' + this.value.substring(end);
+            this.selectionStart = this.selectionEnd = start + 1;
+            updatePreview();
+        }
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,22 @@
+site_name: "Documentation Site"
+description: "A modern documentation platform for teams"
+version: "1.0.0"
+author: "Developer"
+
+# Docker configuration
+docker:
+  image_name: "docs-site"
+  container_name: "docs-site-app"
+  port: 5000
+
+# Deployment configuration
+deployment:
+  environment: "local"
+  auto_restart: true
+  
+# Site features
+features:
+  search: true
+  live_preview: true
+  syntax_highlighting: true
+  responsive_design: true

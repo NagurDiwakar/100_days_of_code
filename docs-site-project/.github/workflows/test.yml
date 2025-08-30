@@ -1,0 +1,237 @@
+name: 🧪 Test and Quality Check
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: 🧪 Run Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🐍 Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+        
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-html flake8 black isort mypy safety bandit
+        
+    - name: 🔍 Security scan
+      run: |
+        # Check for security vulnerabilities
+        safety check
+        
+        # Security linting
+        bandit -r . -x tests/ || true
+        
+    - name: 📋 Code formatting and linting
+      run: |
+        # Check code formatting
+        black --check --diff .
+        
+        # Import sorting
+        isort --check-only --diff .
+        
+        # Linting
+        flake8 . --count --statistics
+        
+        # Type checking
+        mypy app.py --ignore-missing-imports || true
+        
+    - name: 🧪 Run tests with coverage
+      run: |
+        # Create tests if they don't exist
+        mkdir -p tests
+        
+        if [ ! -f tests/test_app.py ]; then
+          cat > tests/test_app.py << 'EOF'
+        import sys
+        import os
+        import tempfile
+        import pytest
+        from pathlib import Path
+        
+        # Add parent directory to path
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        from app import app, DocumentationSite
+        
+        @pytest.fixture
+        def client():
+            """Create a test client"""
+            app.config['TESTING'] = True
+            app.config['WTF_CSRF_ENABLED'] = False
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                app.config['DOCS_DIR'] = temp_dir
+                with app.test_client() as client:
+                    with app.app_context():
+                        yield client
+        
+        def test_homepage(client):
+            """Test homepage loads"""
+            response = client.get('/')
+            assert response.status_code == 200
+            assert b'Documentation Site' in response.data
+        
+        def test_api_docs_endpoint(client):
+            """Test API docs endpoint"""
+            response = client.get('/api/docs')
+            assert response.status_code == 200
+            data = response.get_json()
+            assert isinstance(data, list)
+        
+        def test_new_document_page(client):
+            """Test new document page loads"""
+            response = client.get('/new')
+            assert response.status_code == 200
+            assert b'editor' in response.data
+        
+        def test_search_page(client):
+            """Test search page"""
+            response = client.get('/search')
+            assert response.status_code == 200
+        
+        def test_search_with_query(client):
+            """Test search with query parameter"""
+            response = client.get('/search?q=test')
+            assert response.status_code == 200
+        
+        def test_save_document(client):
+            """Test saving a document"""
+            response = client.post('/save', 
+                json={
+                    'filename': 'test_doc.md',
+                    'content': '# Test Document\n\nThis is a test.'
+                },
+                content_type='application/json'
+            )
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['success'] is True
+        
+        def test_save_document_invalid_data(client):
+            """Test saving with invalid data"""
+            response = client.post('/save', 
+                json={},
+                content_type='application/json'
+            )
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['success'] is False
+        
+        def test_documentation_site_initialization():
+            """Test DocumentationSite class"""
+            with tempfile.TemporaryDirectory() as temp_dir:
+                os.chdir(temp_dir)
+                doc_site = DocumentationSite()
+                assert doc_site.config is not None
+                assert 'site_name' in doc_site.config
+                assert 'version' in doc_site.config
+        
+        def test_documentation_site_get_docs():
+            """Test getting document list"""
+            with tempfile.TemporaryDirectory() as temp_dir:
+                os.chdir(temp_dir)
+                doc_site = DocumentationSite()
+                
+                # Create a test document
+                docs_dir = Path('docs')
+                docs_dir.mkdir(exist_ok=True)
+                (docs_dir / 'test.md').write_text('# Test\nContent')
+                
+                docs = doc_site.get_all_docs()
+                assert len(docs) == 1
+                assert docs[0]['filename'] == 'test.md'
+                assert docs[0]['title'] == 'Test'
+        
+        def test_nonexistent_document(client):
+            """Test accessing non-existent document"""
+            response = client.get('/doc/nonexistent')
+            assert response.status_code == 404
+        EOF
+        fi
+        
+        # Run tests with coverage
+        pytest tests/ -v \
+          --cov=. \
+          --cov-report=xml \
+          --cov-report=html \
+          --cov-report=term-missing \
+          --html=reports/test-report.html \
+          --self-contained-html
+        
+    - name: 📊 Upload coverage to Codecov
+      if: matrix.python-version == '3.9'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+        
+    - name: 📤 Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          coverage.xml
+          htmlcov/
+          reports/
+        retention-days: 30
+
+  docker-test:
+    name: 🐳 Docker Build Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🏗️ Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: 🧪 Test Docker build
+      run: |
+        docker build -t docs-site-test .
+        
+        # Test container startup
+        docker run -d --name test-container -p 5000:5000 docs-site-test
+        
+        # Wait for container to start
+        sleep 10
+        
+        # Test health check
+        docker exec test-container curl -f http://localhost:5000 || exit 1
+        
+        # Cleanup
+        docker stop test-container
+        docker rm test-container
+        
+    - name: 🔍 Security scan of Docker image
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'docs-site-test'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: 📤 Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'

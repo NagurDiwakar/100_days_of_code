@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Search Results - {{ config.site_name }}{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row">
+        <div class="col">
+            <h2>🔍 Search Results</h2>
+            {% if query %}
+                <p class="lead">Results for: <strong>"{{ query }}"</strong></p>
+                
+                {% if results %}
+                    <p class="text-muted">Found {{ results|length }} document(s)</p>
+                    
+                    <div class="row">
+                        {% for doc in results %}
+                        <div class="col-md-6 col-lg-4 mb-3">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <a href="{{ url_for('view_doc', filename=doc.filename.replace('.md', '')) }}" 
+                                           class="text-decoration-none">
+                                            {{ doc.title }}
+                                        </a>
+                                    </h5>
+                                    <p class="card-text">
+                                        <small class="text-muted">
+                                            📅 Modified: {{ doc.modified }}<br>
+                                            📝 File: {{ doc.filename }}
+                                        </small>
+                                    </p>
+                                    <div class="btn-group btn-group-sm w-100">
+                                        <a href="{{ url_for('view_doc', filename=doc.filename.replace('.md', '')) }}" 
+                                           class="btn btn-primary">👁️ View</a>
+                                        <a href="{{ url_for('edit_doc', filename=doc.filename.replace('.md', '')) }}" 
+                                           class="btn btn-outline-primary">✏️ Edit</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-5">
+                        <h4>😕 No results found</h4>
+                        <p>Try searching with different keywords or <a href="{{ url_for('new_doc') }}">create a new document</a>.</p>
+                    </div>
+                {% endif %}
+            {% else %}
+                <div class="text-center py-5">
+                    <h4>🔍 Enter a search term</h4>
+                    <p>Use the search box in the navigation to find documents.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

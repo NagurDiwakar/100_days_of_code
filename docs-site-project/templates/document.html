@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}{{ filename.replace('.md', '').replace('_', ' ').title() }} - {{ config.site_name }}{% endblock %}
+
+{% block content %}
+<div class="col-md-2 sidebar p-3">
+    <div class="sticky-top">
+        <a href="{{ url_for('index') }}" class="btn btn-outline-primary btn-sm w-100 mb-2">🏠 Home</a>
+        <a href="{{ url_for('edit_doc', filename=filename.replace('.md', '')) }}" 
+           class="btn btn-warning btn-sm w-100 mb-2">✏️ Edit</a>
+        <a href="{{ url_for('new_doc') }}" class="btn btn-success btn-sm w-100">➕ New</a>
+    </div>
+</div>
+
+<div class="col-md-10 content p-4">
+    <div class="row">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('index') }}">Home</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">{{ filename.replace('.md', '').replace('_', ' ').title() }}</li>
+                </ol>
+            </nav>
+            
+            <div class="document-content">
+                {{ content | safe }}
+            </div>
+            
+            <hr class="my-4">
+            <div class="d-flex justify-content-between align-items-center">
+                <small class="text-muted">Document: {{ filename }}</small>
+                <div>
+                    <a href="{{ url_for('edit_doc', filename=filename.replace('.md', '')) }}" 
+                       class="btn btn-outline-warning btn-sm">✏️ Edit Document</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Add copy button to code blocks
+    document.addEventListener('DOMContentLoaded', function() {
+        const codeBlocks = document.querySelectorAll('pre code');
+        codeBlocks.forEach(function(codeBlock) {
+            const button = document.createElement('button');
+            button.className = 'btn btn-outline-secondary btn-sm position-absolute top-0 end-0 m-2';
+            button.innerHTML = '📋 Copy';
+            button.style.fontSize = '0.75rem';
+            
+            const pre = codeBlock.parentNode;
+            pre.style.position = 'relative';
+            pre.appendChild(button);
+            
+            button.addEventListener('click', function() {
+                navigator.clipboard.writeText(codeBlock.textContent);
+                button.innerHTML = '✅ Copied!';
+                setTimeout(() => {
+                    button.innerHTML = '📋 Copy';
+                }, 2000);
+            });
+        });
+    });
+</script>
+{% endblock %}

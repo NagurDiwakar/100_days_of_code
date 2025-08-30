@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="col-md-3 sidebar p-3">
+    <h5 class="mb-3">📖 Documentation</h5>
+    <div class="search-box p-3 rounded mb-3">
+        <h6 class="text-white mb-2">Quick Actions</h6>
+        <a href="{{ url_for('new_doc') }}" class="btn btn-light btn-sm w-100 mb-2">➕ New Document</a>
+        <a href="{{ url_for('api_docs') }}" class="btn btn-outline-light btn-sm w-100">📡 API</a>
+    </div>
+    
+    {% if docs %}
+    <h6>Recent Documents</h6>
+    <div class="list-group">
+        {% for doc in docs[:10] %}
+        <a href="{{ url_for('view_doc', filename=doc.filename.replace('.md', '')) }}" 
+           class="list-group-item list-group-item-action">
+            <div class="d-flex w-100 justify-content-between">
+                <h6 class="mb-1">{{ doc.title }}</h6>
+                <small>{{ doc.modified }}</small>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<div class="col-md-9 content p-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h1 class="display-4">Welcome to {{ config.site_name }}</h1>
+            <p class="lead">{{ config.description }}</p>
+        </div>
+    </div>
+
+    {% if docs %}
+    <div class="row">
+        <div class="col">
+            <h2>📄 All Documents ({{ docs|length }})</h2>
+            <div class="row">
+                {% for doc in docs %}
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card doc-item h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <a href="{{ url_for('view_doc', filename=doc.filename.replace('.md', '')) }}" 
+                                   class="text-decoration-none">
+                                    {{ doc.title }}
+                                </a>
+                            </h5>
+                            <p class="card-text">
+                                <small class="text-muted">
+                                    📅 Modified: {{ doc.modified }}<br>
+                                    📝 File: {{ doc.filename }}
+                                </small>
+                            </p>
+                            <div class="btn-group btn-group-sm w-100" role="group">
+                                <a href="{{ url_for('view_doc', filename=doc.filename.replace('.md', '')) }}" 
+                                   class="btn btn-primary">👁️ View</a>
+                                <a href="{{ url_for('edit_doc', filename=doc.filename.replace('.md', '')) }}" 
+                                   class="btn btn-outline-primary">✏️ Edit</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="row">
+        <div class="col text-center">
+            <div class="py-5">
+                <h3>🚀 Get Started</h3>
+                <p class="lead">No documents found. Create your first document to get started!</p>
+                <a href="{{ url_for('new_doc') }}" class="btn btn-primary btn-lg">Create First Document</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

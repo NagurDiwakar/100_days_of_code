@@ -1,0 +1,178 @@
+name: 🐳 Docker Build and Push
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: docs-site
+
+jobs:
+  build-and-push:
+    name: 🏗️ Build and Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🏗️ Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: 🔐 Log in to Container Registry
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: 🏷️ Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+        labels: |
+          org.opencontainers.image.title=Documentation Site
+          org.opencontainers.image.description=A modern documentation platform
+          org.opencontainers.image.vendor=Documentation Team
+          org.opencontainers.image.licenses=MIT
+          
+    - name: 🏗️ Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: 🔍 Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: 📤 Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+        
+    - name: 📋 Generate SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+        format: spdx-json
+        output-file: sbom.spdx.json
+        
+    - name: 📤 Upload SBOM
+      uses: actions/upload-artifact@v3
+      with:
+        name: sbom
+        path: sbom.spdx.json
+        
+    - name: 📋 Image digest
+      run: echo ${{ steps.build.outputs.digest }}
+
+  # Test the built image
+  test-image:
+    name: 🧪 Test Docker Image
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name != 'pull_request'
+    
+    steps:
+    - name: 🔐 Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: 🏷️ Get image tag
+      id: tag
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        else
+          echo "tag=${{ github.ref_name }}-${{ github.sha }}" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: 🧪 Test container functionality
+      run: |
+        IMAGE="${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
+        
+        # Pull the image
+        docker pull $IMAGE
+        
+        # Run container
+        docker run -d --name test-docs-site -p 5000:5000 $IMAGE
+        
+        # Wait for startup
+        sleep 15
+        
+        # Test endpoints
+        curl -f http://localhost:5000/ || exit 1
+        curl -f http://localhost:5000/api/docs || exit 1
+        curl -f http://localhost:5000/new || exit 1
+        
+        # Test health
+        docker exec test-docs-site curl -f http://localhost:5000/ || exit 1
+        
+        echo "✅ Container tests passed!"
+        
+        # Cleanup
+        docker stop test-docs-site
+        docker rm test-docs-site
+
+  # Deploy to staging environment
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-and-push, test-image]
+    if: github.ref == 'refs/heads/main'
+    environment: 
+      name: staging
+      url: https://docs-staging.example.com
+      
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🚀 Deploy to staging
+      run: |
+        echo "🚀 Deploying to staging environment..."
+        
+        # This is where you would add your staging deployment logic
+        # Examples:
+        # - SSH to staging server and update containers
+        # - Update Kubernetes deployment
+        # - Trigger cloud provider deployment
+        
+        # For demonstration, we'll just show the commands
+        echo "Docker commands for staging deployment:"
+        echo "docker pull ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}:latest"
+        echo "docker-compose -f docker-compose.staging.yml up -d"
+        
+        echo "✅ Staging deployment completed!"
