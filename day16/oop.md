@@ -10,7 +10,7 @@
 
 # oop - reusable modules with in the program ,with in large and complex projects
 
-# 
+# https://imvishalpandey.medium.com/difference-between-module-and-class-8718904421fb
 
 
 
