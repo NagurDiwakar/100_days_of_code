@@ -12,7 +12,7 @@ def random_color():
     b = random.randint(0,255)
     random_color = (r,g,b)
     return random_color
-turtle.colormode(255)
+t.colormode(255)
 
 
 directions = [0,90,180,270]
