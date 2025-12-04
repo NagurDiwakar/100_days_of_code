@@ -1,0 +1,31 @@
+# This workflow illustrates the use of container runners for building
+# and pushing Docker images to GitHub Container Registry or Docker Hub
+
+name : running_on_docker
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: docker://alpine:latest
+  
+    steps:
+    - name: Check Docker version
+      run: docker --version 
+    - name: Run a simple Docker command
+      run: echo "Hello from inside a Docker container!"
+    - name: List files in the container
+      run: ls -la /
+    - name: Print working directory
+      run: sh -c "pwd"
+    - name: Display environment variables
+      run: printenv
+
+    - name: Install curl
+      run: apk add --no-cache curl
+    - name: Test curl installation
+      run: curl --version  
