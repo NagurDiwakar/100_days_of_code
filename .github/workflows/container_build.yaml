@@ -3,12 +3,12 @@ name : Ci pipeline
 on:
   push:
     paths:
-      - python-web-app-e2e-deployment/**
+      - python_web_app_e2e_deployment/**
     branches:
       - main
   pull_request:
     paths:
-      - python-web-app-e2e-deployment/**
+      - python_web_app_e2e_deployment/**
     branches:
       - main
 
