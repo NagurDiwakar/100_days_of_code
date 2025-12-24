@@ -1,31 +1,43 @@
-# This workflow illustrates the use of container runners for building
-# and pushing Docker images to GitHub Container Registry or Docker Hub
-
-name : running_on_docker
+name : Ci pipeline
 
 on:
   push:
-    branches: [none]
+    paths:
+      - python-web-app-e2e-deployment
+  pull_request:
+    paths:
+      - python-web-app-e2e-deployment
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: docker://alpine:latest
-  
-    steps:
-    - name: Check Docker version
-      run: docker --version 
-    - name: Run a simple Docker command
-      run: echo "Hello from inside a Docker container!"
-    - name: List files in the container
-      run: ls -la /
-    - name: Print working directory
-      run: sh -c "pwd"
-    - name: Display environment variables
-      run: printenv
+    matrix-pip:
+        runs-on: ubuntu-latest
+        strategy:
+          matrix:
+            python-version: [3.11,3.12]
 
-    - name: Install curl
-      run: apk add --no-cache curl
-    - name: Test curl installation
-      run: curl --version  
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v2
+
+        - name: Set up Python
+          uses: actions/setup-python@v2
+          with: 
+            python-version: ${{ matrix.python-version }}
+
+        - name: Upgrade pip
+          run: python -m pip install --upgrade pip 
+
+        - name: Install project dependencies
+          run: python -m pip install -r requirements.txt
+
+        - name: build project
+          run: |
+            python main.py build --output-dir artifacts
+            ls -la artifacts
+      
+        - name: Upload artifacts
+          uses: actions/upload-artifact@v4
+          with:
+            name: build-${{ matrix.python-version }}-${{ github.run_id }}
+            path: artifacts
+            
