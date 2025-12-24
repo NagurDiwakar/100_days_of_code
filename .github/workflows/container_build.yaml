@@ -3,10 +3,14 @@ name : Ci pipeline
 on:
   push:
     paths:
-      - python-web-app-e2e-deployment
+      - python-web-app-e2e-deployment/**
+    branches:
+      - main
   pull_request:
     paths:
-      - python-web-app-e2e-deployment
+      - python-web-app-e2e-deployment/**
+    branches:
+      - main
 
 jobs:
     matrix-pip:
