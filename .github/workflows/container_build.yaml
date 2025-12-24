@@ -6,11 +6,6 @@ on:
       - python_web_app_e2e_deployment/**
     branches:
       - main
-  pull_request:
-    paths:
-      - python_web_app_e2e_deployment/**
-    branches:
-      - main
 
 jobs:
     build:
@@ -34,14 +29,14 @@ jobs:
         - name: Install project dependencies
           run: python -m pip install -r python_web_app_e2e_deployment/requirements.txt
 
-        - name: build project
+        - name: Build Docker image
           run: |
-            python main.py build --output-dir artifacts
-            ls -la artifacts
+            cd python_web_app_e2e_deployment
+            docker build -t python-web-app:${{ matrix.python-version }} .
+
       
         - name: Upload artifacts
           uses: actions/upload-artifact@v4
           with:
             name: build-${{ matrix.python-version }}-${{ github.run_id }}
-            path: artifacts
-            
+            path: python_web_app_e2e_deployment/artifacts
