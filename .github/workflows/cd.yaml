@@ -1,0 +1,26 @@
+name: Continous deployment/delivery
+
+on:
+  push:
+    branches:
+    - none
+
+jobs:
+    my_first_job:
+             runs-on: ubuntu-latest
+             steps:
+             - name: checkout stage
+               uses: actions/checkout@v4
+
+    my_second_job:
+             runs-on: ubuntu-latest
+             steps:
+             - name: checkout stage
+               uses: actions/checkout@v4
+
+            
+        
+
+
+
+
